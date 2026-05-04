@@ -24,7 +24,7 @@ function processUser(userData) { // S3776: Refactored Cognitive Complexity
   if (!userData?.name || userData.name.length === 0) {
     return null;
   }
-  if (!userData?.email || !userData.email?.includes('@')) {
+  if (!userData.email?.includes('@')) {
     return null;
   }
   if (!userData.age || userData.age <= 0 || userData.age >= 150) {

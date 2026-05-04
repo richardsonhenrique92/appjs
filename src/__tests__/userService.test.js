@@ -31,7 +31,7 @@ jest.mock('crypto', () => ({
 
 describe('userService', () => {
   // S2068: Dynamically generated fake password to avoid hardcoded credentials
-  const fakePassword = 'fake_pw_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  const fakePassword = 'fake_pw_' + crypto.randomBytes(8).toString('hex');
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -290,12 +290,17 @@ describe('userService', () => {
     });
 
     it('should apply no discount for other types', () => {
-      expect(calculateDiscount(100, 'guest')).toBe(100);
+      expect(calculateDiscount(100, 'basic')).toBe(100);
+      expect(calculateDiscount(100, null)).toBe(100);
       expect(calculateDiscount(100, undefined)).toBe(100);
     });
 
     it('should handle zero price', () => {
       expect(calculateDiscount(0, 'premium')).toBe(0);
+    });
+
+    it('should handle negative price', () => {
+      expect(calculateDiscount(-50, 'premium')).toBe(-40);
     });
   });
 });
