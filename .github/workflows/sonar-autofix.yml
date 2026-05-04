@@ -1,0 +1,168 @@
+name: Sonar Autofix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sonar-autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sonar-autofix:
+    if: ${{ !contains(github.event.pull_request.title, '[skip-autofix]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Inspect HEAD commit (anti-loop)
+        id: bot-check
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_AUTOFIX }}
+        run: |
+          SHA="${{ github.event.pull_request.head.sha }}"
+          REPO="${{ github.repository }}"
+          DATA=$(curl -s -H "Authorization: token $GH_TOKEN" -H "User-Agent: t" \
+            "https://api.github.com/repos/$REPO/commits/$SHA")
+          MSG=$(echo "$DATA" | jq -r '.commit.message // ""' | head -1)
+          AUTHOR=$(echo "$DATA" | jq -r '.commit.author.name // ""')
+          EMAIL=$(echo "$DATA" | jq -r '.commit.author.email // ""')
+          echo "HEAD message: $MSG"
+          echo "HEAD author:  $AUTHOR <$EMAIL>"
+          if [[ "$MSG" == fix\(sonar\)\:\ autofix* ]] || \
+             [[ "$AUTHOR" == "Sonar Autofix Bot" ]] || \
+             [[ "$EMAIL" == "sonar-autofix@devhub.bot" ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::notice::Bot commit detected — skipping to avoid loop"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout PR
+        if: steps.bot-check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node 20
+        if: steps.bot-check.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install sonar-scanner
+        if: steps.bot-check.outputs.skip != 'true'
+        run: npm install -g sonarqube-scanner
+
+      - name: Run sonar-scanner (initial)
+        if: steps.bot-check.outputs.skip != 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          sonar-scanner \
+            -Dsonar.host.url=${{ vars.SONAR_URL }} \
+            -Dsonar.login=$SONAR_TOKEN \
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} \
+            -Dsonar.sources=src \
+            -Dsonar.exclusions=node_modules/**,coverage/**,**/*.test.js,__tests__/** \
+            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }} \
+            -Dsonar.pullrequest.branch=${{ github.event.pull_request.head.ref }} \
+            -Dsonar.pullrequest.base=${{ github.event.pull_request.base.ref }}
+
+      - name: Wait for Sonar Compute Engine task
+        if: steps.bot-check.outputs.skip != 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_URL: ${{ vars.SONAR_URL }}
+        run: |
+          TASK_ID=$(grep '^ceTaskId=' .scannerwork/report-task.txt | cut -d'=' -f2)
+          echo "Sonar CE task: $TASK_ID"
+          for i in {1..40}; do
+            ST=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_URL/api/ce/task?id=$TASK_ID" | jq -r '.task.status')
+            echo "Attempt $i: task=$ST"
+            if [ "$ST" = "SUCCESS" ]; then exit 0; fi
+            if [ "$ST" = "FAILED" ] || [ "$ST" = "CANCELED" ]; then
+              echo "::error::Sonar task ended as $ST"; exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Timeout waiting for Sonar CE task"; exit 1
+
+      - name: Read gate (after task complete)
+        if: steps.bot-check.outputs.skip != 'true'
+        id: gate-initial
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_URL: ${{ vars.SONAR_URL }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PROJECT: ${{ vars.SONAR_PROJECT_KEY }}
+        run: |
+          STATUS=$(curl -s -u "$SONAR_TOKEN:" \
+            "$SONAR_URL/api/qualitygates/project_status?projectKey=$PROJECT&pullRequest=$PR_NUM" \
+            | jq -r '.projectStatus.status')
+          echo "Gate: $STATUS"
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Gate PASSED — done
+        if: steps.bot-check.outputs.skip != 'true' && steps.gate-initial.outputs.status == 'OK'
+        run: echo "✅ Quality Gate PASSED — no autofix needed"
+
+      - name: Trigger n8n autofix (fire-and-forget)
+        if: steps.bot-check.outputs.skip != 'true' && steps.gate-initial.outputs.status == 'ERROR'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GIT_TOKEN: ${{ secrets.GH_PAT_AUTOFIX }}
+          N8N_URL: ${{ vars.N8N_WEBHOOK_URL }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg pkey "${{ vars.SONAR_PROJECT_KEY }}" \
+            --arg prn  "${{ github.event.pull_request.number }}" \
+            --arg src  "${{ github.event.pull_request.head.ref }}" \
+            --arg tgt  "${{ github.event.pull_request.base.ref }}" \
+            --arg sha  "${{ github.event.pull_request.head.sha }}" \
+            --arg sonarUrl "${{ vars.SONAR_URL }}" \
+            --arg sonarTok "$SONAR_TOKEN" \
+            --arg gitTok   "$GIT_TOKEN" \
+            '{provider:"github", repoName:$repo, projectKey:$pkey, pullRequestKey:$prn,
+              sourceBranch:$src, targetBranch:$tgt, commitSha:$sha,
+              sonarUrl:$sonarUrl, sonarToken:$sonarTok, gitToken:$gitTok,
+              serviceId:"0"}')
+          # Fire-and-forget: ngrok-free drops long connections; n8n keeps running in background.
+          # We accept that curl may time out — what matters is the request was received.
+          echo "Sending webhook to n8n (max 60s for ack, then polling)..."
+          curl -s --max-time 60 \
+            -X POST "$N8N_URL" \
+            -H "Content-Type: application/json" \
+            -H "ngrok-skip-browser-warning: true" \
+            -d "$PAYLOAD" -o /tmp/n8n-resp.txt || echo "::warning::Webhook curl exited non-zero (likely ngrok drop) — n8n may still be running"
+          echo "Response head:"
+          head -c 500 /tmp/n8n-resp.txt 2>/dev/null || true
+
+      - name: Wait for autofix to converge (gate poll)
+        if: steps.bot-check.outputs.skip != 'true' && steps.gate-initial.outputs.status == 'ERROR'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_URL: ${{ vars.SONAR_URL }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PROJECT: ${{ vars.SONAR_PROJECT_KEY }}
+        run: |
+          # Poll up to 30min for the n8n pipeline to make commits and pass the gate.
+          for i in {1..60}; do
+            GATE=$(curl -s -u "$SONAR_TOKEN:" \
+              "$SONAR_URL/api/qualitygates/project_status?projectKey=$PROJECT&pullRequest=$PR_NUM" \
+              | jq -r '.projectStatus.status')
+            echo "Poll $i (~$((i*30))s): gate=$GATE"
+            if [ "$GATE" = "OK" ] || [ "$GATE" = "NONE" ]; then
+              echo "::notice::✅ Autofix succeeded — gate now PASSED"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::❌ Autofix did not converge in 30min — gate still ERROR"
+          exit 1
