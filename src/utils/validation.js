@@ -3,7 +3,7 @@ function _validateCommonInputFields(input) {
   if (!input.name || input.name.trim() === '') {
     errors.push('Name is required');
   }
-  if (!input.email?.includes('@')) {
+  if (!input.email?.includes('@')) { // S6582: Already using optional chaining
     errors.push('Valid email is required');
   }
   if (!input.phone || input.phone.length < 10) {

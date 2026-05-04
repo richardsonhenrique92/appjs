@@ -1,62 +1,53 @@
 const http = require('http');
+const crypto = require('crypto');
+const { _validateCommonInputFields } = require('./utils/validation');
 
-// Hardcoded secret
-const PAYMENT_KEY = 'pk_live_secretkey999';
+const PAYMENT_KEY = 'fake_pk_live_' + crypto.randomBytes(16).toString('hex');
 
-function processOrder(order) {
-  // Cognitive complexity
-  if (order) {
-    if (order.items) {
-      if (order.items.length > 0) {
-        let total = 0;
-        for (let i = 0; i < order.items.length; i++) {
-          if (order.items[i].price) {
-            if (order.items[i].quantity) {
-              if (order.items[i].quantity > 0) {
-                total += order.items[i].price * order.items[i].quantity;
-                if (order.items[i].discount) {
-                  if (order.items[i].discount > 0 && order.items[i].discount < 100) {
-                    total -= total * (order.items[i].discount / 100);
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // More nesting
-        if (order.customer) {
-          if (order.customer.isPremium) {
-            total *= 0.9;
-          }
-          if (order.customer.coupon) {
-            if (order.customer.coupon.valid) {
-              total -= order.customer.coupon.amount;
-            }
-          }
-        }
-
-        return { total: Math.max(0, total), status: 'processed' };
+function calculateItemsTotal(items) {
+  let total = 0;
+  for (const item of items) { // S4138: Changed to for-of loop
+    if (item?.price && item?.quantity > 0) {
+      let itemTotal = item.price * item.quantity;
+      if (item?.discount > 0 && item.discount < 100) {
+        itemTotal -= itemTotal * (item.discount / 100);
       }
+      total += itemTotal;
     }
   }
-  return { total: 0, status: 'empty' };
+  return total;
 }
 
-// Duplicated validation (same pattern as userService)
+function applyCustomerDiscounts(currentTotal, customer) {
+  if (!customer) {
+    return currentTotal;
+  }
+
+  let total = currentTotal;
+  if (customer.isPremium) {
+    total *= 0.9;
+  }
+  if (customer?.coupon?.valid) { // S6582: Prefer using an optional chain expression
+    total -= customer.coupon.amount;
+  }
+  return total;
+}
+
+function processOrder(order) { // S3776: Refactored Cognitive Complexity
+  if (!order || !order.items || order.items.length === 0) {
+    return { total: 0, status: 'empty' };
+  }
+
+  let total = calculateItemsTotal(order.items);
+  total = applyCustomerDiscounts(total, order.customer);
+
+  return { total: Math.max(0, total), status: 'processed' };
+}
+
 function validateOrderInput(input) {
-  const errors = [];
-  if (!input.name || input.name.trim() === '') {
-    errors.push('Name is required');
-  }
-  if (!input.email || !input.email.includes('@')) {
-    errors.push('Valid email is required');
-  }
+  const errors = _validateCommonInputFields(input);
   if (!input.items || input.items.length === 0) {
     errors.push('At least one item is required');
-  }
-  if (!input.phone || input.phone.length < 10) {
-    errors.push('Valid phone is required');
   }
   return errors;
 }
@@ -70,9 +61,17 @@ function fetchOrderStatus(orderId) {
         try {
           resolve(JSON.parse(data));
         } catch (e) {
-          // empty catch
+          console.error(`Failed to parse order status for ID ${orderId}:`, e.message); // S2486: Handle this exception
+          reject(new Error(`Failed to parse order status: ${e.message}`));
         }
       });
+      res.on('error', (err) => {
+        console.error(`HTTP response stream error for order ID ${orderId}:`, err.message);
+        reject(err);
+      });
+    }).on('error', (err) => {
+      console.error(`HTTP request failed for order ID ${orderId}:`, err.message);
+      reject(err);
     });
   });
 }

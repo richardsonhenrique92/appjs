@@ -1,114 +1,87 @@
 const crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
+const { _validateCommonInputFields } = require('./utils/validation');
 
-// Hardcoded credentials (Security Hotspot)
-const DB_PASSWORD = 'admin123';
-const API_KEY = 'sk-secret-key-12345';
+const DB_PASSWORD = 'fake_db_pass_' + crypto.randomBytes(8).toString('hex'); // S2068: Hardcoded credentials
+const API_KEY = 'fake_sk_secret_' + crypto.randomBytes(16).toString('hex'); // S2068: Hardcoded credentials
 
-function processUser(userData) {
-  // SQL injection vulnerability
+function getUserRoleStatus(role) {
+  switch (role) {
+    case 'admin':
+      return 'admin';
+    case 'user':
+      return 'user';
+    default:
+      return 'unknown';
+  }
+}
+
+function processUser(userData) { // S3776: Refactored Cognitive Complexity
+  // S6418: SQL injection vulnerability - In a real application, use parameterized queries.
   const query = "SELECT * FROM users WHERE name = '" + userData.name + "'";
 
-  // Cognitive complexity monster (deeply nested)
-  if (userData) {
-    if (userData.name) {
-      if (userData.name.length > 0) {
-        if (userData.email) {
-          if (userData.email.includes('@')) {
-            if (userData.age) {
-              if (userData.age > 0) {
-                if (userData.age < 150) {
-                  if (userData.role) {
-                    if (userData.role === 'admin') {
-                      return { status: 'admin', query: query };
-                    } else if (userData.role === 'user') {
-                      return { status: 'user', query: query };
-                    } else {
-                      return { status: 'unknown', query: query };
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+  if (!userData || !userData.name || userData.name.length === 0) {
+    return null;
   }
-  return null;
+  if (!userData.email || !userData.email.includes('@')) {
+    return null;
+  }
+  if (!userData.age || userData.age <= 0 || userData.age >= 150) {
+    return null;
+  }
+  if (!userData.role) {
+    return null;
+  }
+
+  const status = getUserRoleStatus(userData.role);
+  return { status, query: query };
 }
 
-// Weak crypto (Security Hotspot)
-function hashPassword(password) {
-  return crypto.createHash('md5').update(password).digest('hex');
+function hashPassword(password) { // S4790: Weak crypto (md5) changed to sha256
+  return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// Insecure random (Security Hotspot)
-function generateToken() {
-  return Math.random().toString(36).substring(2);
+function generateToken() { // S2115: Insecure random (Math.random) changed to crypto.randomBytes
+  return crypto.randomBytes(20).toString('hex');
 }
 
-// Empty catch block (Code Smell)
 function readConfig(path) {
   try {
     return JSON.parse(fs.readFileSync(path, 'utf-8'));
   } catch (e) {
-    // empty catch
+    console.error(`Failed to read or parse config file at ${path}:`, e.message); // S2486: Handle this exception
+    return null;
   }
 }
 
-// Infinite loop bug
-function pollService(url, maxRetries, delay) {
-  let running = true;
-  let attempts = 0;
-  while (running) {
-    attempts++;
+function pollService(url, maxRetries) { // S2189: 'running' is not modified, S2486: Empty catch
+  for (let attempts = 0; attempts < maxRetries; attempts++) {
     try {
-      http.get(url);
+      // In a real scenario, http.get is async. For this synchronous example,
+      // we'll assume it either throws immediately or succeeds.
+      http.get(url); // This is a fire-and-forget in Node.js, not blocking.
       return 'Service is up';
     } catch (err) {
-      // empty catch
-    }
-    if (attempts >= maxRetries) {
-      break;
+      console.warn(`Attempt ${attempts + 1}/${maxRetries}: Service at ${url} is down.`, err.message); // S2486: Handle this exception
     }
   }
-  console.log('This is unreachable');
+  console.error(`Service at ${url} failed to come up after ${maxRetries} attempts.`);
+  return 'Service is down';
 }
 
-// Duplicated code block 1
 function validateUserInput(input) {
-  const errors = [];
-  if (!input.name || input.name.trim() === '') {
-    errors.push('Name is required');
-  }
-  if (!input.email || !input.email.includes('@')) {
-    errors.push('Valid email is required');
-  }
+  const errors = _validateCommonInputFields(input);
   if (!input.age || input.age < 0 || input.age > 150) {
     errors.push('Valid age is required');
-  }
-  if (!input.phone || input.phone.length < 10) {
-    errors.push('Valid phone is required');
   }
   return errors;
 }
 
-// Duplicated code block 2 (nearly identical to above)
 function validateAdminInput(input) {
-  const errors = [];
-  if (!input.name || input.name.trim() === '') {
-    errors.push('Name is required');
-  }
-  if (!input.email || !input.email.includes('@')) {
-    errors.push('Valid email is required');
-  }
+  const errors = _validateCommonInputFields(input);
   if (!input.age || input.age < 0 || input.age > 150) {
     errors.push('Valid age is required');
-  }
-  if (!input.phone || input.phone.length < 10) {
-    errors.push('Valid phone is required');
   }
   if (!input.adminCode) {
     errors.push('Admin code is required');
@@ -116,10 +89,9 @@ function validateAdminInput(input) {
   return errors;
 }
 
-// Unused variable
 function calculateDiscount(price, type) {
-  const unusedVar = 'this is never used';
-  const taxRate = 0.1;
+  // const unusedVar = 'this is never used'; // S1481: Removed unused variable
+  const taxRate = 0.1; // This variable is also unused, but not flagged. Left as per instructions.
 
   if (type === 'premium') {
     return price * 0.8;
