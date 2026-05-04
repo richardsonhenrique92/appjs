@@ -34,7 +34,7 @@ function applyCustomerDiscounts(currentTotal, customer) {
 }
 
 function processOrder(order) { // S3776: Refactored Cognitive Complexity
-  if (!order || !order?.items || order.items.length === 0) {
+  if (!order?.items || order.items.length === 0) {
     return { total: 0, status: 'empty' };
   }
 
@@ -54,7 +54,7 @@ function validateOrderInput(input) {
 
 function fetchOrderStatus(orderId) {
   return new Promise((resolve, reject) => {
-    http.get('http://api.internal/orders/' + orderId, (res) => {
+    http.get('https://api.internal/orders/' + orderId, (res) => {
       let data = '';
       res.on('data', (chunk) => data += chunk);
       res.on('end', () => {

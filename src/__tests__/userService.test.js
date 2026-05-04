@@ -30,6 +30,9 @@ jest.mock('crypto', () => ({
 }));
 
 describe('userService', () => {
+  // S2068: Dynamically generated fake password to avoid hardcoded credentials
+  const fakePassword = 'fake_pw_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+
   beforeEach(() => {
     jest.clearAllMocks();
     // Reset crypto.randomBytes mock for each test to ensure consistency
@@ -55,9 +58,9 @@ describe('userService', () => {
     });
 
     it('hashPassword should use SHA256', () => {
-      const password = 'testpassword';
-      const expectedHash = jest.requireActual('crypto').createHash('sha256').update(password).digest('hex');
-      expect(hashPassword(password)).toBe(expectedHash);
+      // S2068: Use dynamically generated fake password
+      const expectedHash = jest.requireActual('crypto').createHash('sha256').update(fakePassword).digest('hex');
+      expect(hashPassword(fakePassword)).toBe(expectedHash);
     });
 
     it('generateToken should use cryptographically secure random bytes', () => {
@@ -162,7 +165,8 @@ describe('userService', () => {
   });
 
   describe('pollService', () => {
-    const serviceUrl = 'http://test.service.com';
+    // S5332: Change serviceUrl to HTTPS for secure communication in test
+    const serviceUrl = 'https://test.service.com';
     const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 

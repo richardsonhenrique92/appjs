@@ -21,10 +21,10 @@ function processUser(userData) { // S3776: Refactored Cognitive Complexity
   // S6418: SQL injection vulnerability - In a real application, use parameterized queries.
   const query = "SELECT * FROM users WHERE name = '" + userData.name + "'";
 
-  if (!userData || !userData?.name || userData.name.length === 0) {
+  if (!userData?.name || userData.name.length === 0) {
     return null;
   }
-  if (!userData?.email || !userData.email.includes('@')) {
+  if (!userData?.email || !userData.email?.includes('@')) {
     return null;
   }
   if (!userData.age || userData.age <= 0 || userData.age >= 150) {

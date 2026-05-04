@@ -8,6 +8,18 @@ jest.mock('http');
 describe('orderProcessor', () => {
   const fakeOrderId = 'order_' + crypto.randomBytes(8).toString('hex');
 
+  // S2004: Helper function to reduce nesting in mock implementation
+  const mockHttpErrorRequest = (mockError) => (url, callback) => {
+    const mockReq = { on: jest.fn(), end: jest.fn() };
+    mockReq.on.mockImplementation((event, handler) => {
+      if (event === 'error') {
+        handler(mockError);
+      }
+      return mockReq;
+    });
+    return mockReq;
+  };
+
   beforeEach(() => {
     // Reset mocks before each test
     jest.clearAllMocks();
@@ -185,7 +197,8 @@ describe('orderProcessor', () => {
 
       const result = await fetchOrderStatus(fakeOrderId);
       expect(result).toEqual(mockResponseData);
-      expect(http.get).toHaveBeenCalledWith(`http://api.internal/orders/${fakeOrderId}`, expect.any(Function));
+      // S5332: Update the expected URL to HTTPS
+      expect(http.get).toHaveBeenCalledWith(`https://api.internal/orders/${fakeOrderId}`, expect.any(Function));
     });
 
     it('should reject with an error if JSON parsing fails', async () => {
@@ -202,22 +215,8 @@ describe('orderProcessor', () => {
 
     it('should reject with an error if the HTTP request fails before response', async () => {
       const mockError = new Error('Network error');
-      http.get.mockImplementationOnce((url, callback) => {
-        const mockReq = {
-          on: jest.fn(),
-          end: jest.fn(),
-        };
-
-        // Use a regular function for mockImplementation to avoid nesting arrow functions
-        mockReq.on.mockImplementation(function(event, handler) {
-          if (event === 'error') {
-            handler(mockError); // Call synchronously
-          }
-          return mockReq; // Allow chaining
-        });
-
-        return mockReq;
-      });
+      // S2004: Use the extracted helper function
+      http.get.mockImplementationOnce(mockHttpErrorRequest(mockError));
 
       await expect(fetchOrderStatus(fakeOrderId)).rejects.toThrow('Network error');
     });
