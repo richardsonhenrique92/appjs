@@ -21,10 +21,10 @@ function processUser(userData) { // S3776: Refactored Cognitive Complexity
   // S6418: SQL injection vulnerability - In a real application, use parameterized queries.
   const query = "SELECT * FROM users WHERE name = '" + userData.name + "'";
 
-  if (!userData || !userData.name || userData.name.length === 0) {
+  if (!userData || !userData?.name || userData.name.length === 0) {
     return null;
   }
-  if (!userData.email || !userData.email.includes('@')) {
+  if (!userData?.email || !userData.email.includes('@')) {
     return null;
   }
   if (!userData.age || userData.age <= 0 || userData.age >= 150) {
@@ -90,8 +90,6 @@ function validateAdminInput(input) {
 }
 
 function calculateDiscount(price, type) {
-  // const unusedVar = 'this is never used'; // S1481: Removed unused variable
-  const taxRate = 0.1; // This variable is also unused, but not flagged. Left as per instructions.
 
   if (type === 'premium') {
     return price * 0.8;

@@ -34,7 +34,7 @@ function applyCustomerDiscounts(currentTotal, customer) {
 }
 
 function processOrder(order) { // S3776: Refactored Cognitive Complexity
-  if (!order || !order.items || order.items.length === 0) {
+  if (!order || !order?.items || order.items.length === 0) {
     return { total: 0, status: 'empty' };
   }
 

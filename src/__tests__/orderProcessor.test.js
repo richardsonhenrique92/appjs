@@ -204,14 +204,18 @@ describe('orderProcessor', () => {
       const mockError = new Error('Network error');
       http.get.mockImplementationOnce((url, callback) => {
         const mockReq = {
-          on: jest.fn((event, handler) => {
-            if (event === 'error') {
-              handler(mockError); // Simulate request error
-            }
-          }),
+          on: jest.fn(),
           end: jest.fn(),
         };
-        // No callback for response, error happens on request object
+
+        // Use a regular function for mockImplementation to avoid nesting arrow functions
+        mockReq.on.mockImplementation(function(event, handler) {
+          if (event === 'error') {
+            handler(mockError); // Call synchronously
+          }
+          return mockReq; // Allow chaining
+        });
+
         return mockReq;
       });
 
